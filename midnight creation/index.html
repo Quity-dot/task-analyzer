@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Yuvi's Life Tracker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;800&display=swap" rel="stylesheet">
+  <style>
+    *{box-sizing:border-box;font-family:'Poppins',sans-serif}
+    body{margin:0;padding:30px;min-height:100vh;background:#000;color:#fff}
+    h1{font-size:34px;font-weight:800;margin-bottom:30px;text-align:center;color:#00ffff}
+    .glass{background:rgba(255,255,255,0.05);border:1px solid rgba(0,255,255,0.25);backdrop-filter:blur(14px);border-radius:18px;padding:22px;margin-bottom:25px}
+    .top-bar{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:15px}
+    input,select,button{padding:10px 15px;border-radius:10px;font-size:14px;border:1px solid #00ffff;background:#111;color:#00ffff}
+    button{cursor:pointer;font-weight:600}
+    button:hover{background:#00ffff;color:#000}
+    table{border-collapse:collapse;width:100%;background:#111;border-radius:15px;overflow:hidden;margin-bottom:20px}
+    th,td{border:1px solid #00ffff22;padding:6px;text-align:center;font-size:12px}
+    th{background:#001f1f;color:#00ffff}
+    .habit-name{text-align:left;font-weight:600}
+    .delete-btn{background:#ff004c;border:none;color:#fff;padding:4px 8px;border-radius:6px;cursor:pointer}
+    .delete-btn:hover{background:#ff1a66}
+    input[type="checkbox"]{appearance:none;width:18px;height:18px;border:2px solid #00ffcc;border-radius:4px;background:#000;cursor:pointer}
+    input[type="checkbox"]:checked{background:#00ffcc;box-shadow:0 0 8px #00ffcc}
+    .progress-row{background:#001f1f;color:#00ffcc;font-weight:600}
+    .charts-row{
+      display:flex;
+      gap:20px;
+      flex-wrap:wrap;
+      align-items:stretch;
+      justify-content:center;
+      margin-bottom:25px;
+    }
+    .chart-box{
+      flex:1 1 420px;
+      max-width:520px;
+      height:300px;
+      background:#111;
+      border:1px solid #00ffff22;
+      border-radius:15px;
+      padding:18px;
+      display:flex;
+      flex-direction:column;
+      justify-content:flex-start;
+      align-items:center;
+    }
+    #pieChart{
+      max-height:220px !important;
+    }
+    .year-chart{height:300px}
+    canvas{
+      flex:1;
+      width:100% !important;
+      height:100% !important;
+    }
+  </style>
+</head>
+<body>
+
+<h1>Yuvi's Life Tracker</h1>
+
+<div class="glass">
+  <div class="top-bar">
+    <input id="habitInput" placeholder="Enter new habit">
+    <button onclick="addHabit()">Add Habit</button>
+
+    <select id="monthSelect" onchange="render()"></select>
+    <select id="yearSelect" onchange="render()"></select>
+
+    <button onclick="showChart('line')">Line</button>
+    <button onclick="showChart('bar')">Bar</button>
+  </div>
+
+  <div style="overflow-x:auto">
+    <table id="habitTable"></table>
+  </div>
+</div>
+
+<div class="charts-row">
+  <div class="chart-box">
+    <h3 style="color:#00ffff; margin-bottom:10px; text-align:center;">
+      Day by Day Progress
+    </h3>
+    <canvas id="lineChart"></canvas>
+  </div>
+
+  <div class="chart-box">
+    <h3 style="color:#00ffff; margin-bottom:10px; text-align:center;">
+      Overall Completion
+    </h3>
+    <canvas id="pieChart"></canvas>
+  </div>
+</div>
+
+<div class="glass">
+  <h3 style="color:#00ffff;margin-bottom:10px">📊 Monthly Progress Overview</h3>
+  <div style="overflow-x:auto">
+    <table id="monthlyProgressTable"></table>
+  </div>
+</div>
+
+<div class="glass year-chart">
+  <h3 style="color:#00ffff;margin-bottom:10px">📈 Yearly Progress Chart</h3>
+  <canvas id="yearChart"></canvas>
+</div>
+
+<script>
+let habits = JSON.parse(localStorage.getItem('sheetHabits')) || [];
+let lineChart, pieChart, yearChart;
+let currentType = 'line';
+
+function populateSelectors(){
+  const monthSelect=document.getElementById('monthSelect');
+  const yearSelect=document.getElementById('yearSelect');
+
+  monthSelect.innerHTML='';
+  for(let i=0;i<12;i++){
+    const option=document.createElement('option');
+    option.value=i;
+    option.text=new Date(0,i).toLocaleString('default',{month:'long'});
+    if(i===new Date().getMonth()) option.selected=true;
+    monthSelect.appendChild(option);
+  }
+
+  yearSelect.innerHTML='';
+  for(let y=2026; y<=2030; y++){
+    const option=document.createElement('option');
+    option.value=y;
+    option.text=y;
+    if(y===2026) option.selected=true;
+    yearSelect.appendChild(option);
+  }
+}
+
+function getDaysInMonth(year,month){
+  return new Date(year, month+1, 0).getDate();
+}
+
+function formatDate(year,month,day){
+  return new Date(year,month,day).toISOString().split('T')[0];
+}
+
+function saveData(){
+  localStorage.setItem('sheetHabits', JSON.stringify(habits));
+}
+
+function addHabit(){
+  const input=document.getElementById('habitInput');
+  if(!input.value.trim()) return;
+  habits.push({name:input.value.trim(), history:{}});
+  input.value='';
+  saveData();
+  render();
+}
+
+function deleteHabit(index){
+  if(confirm('Delete this task permanently?')){
+    habits.splice(index,1);
+    saveData();
+    render();
+  }
+}
+
+function toggleHabit(habitIndex,date){
+  habits[habitIndex].history[date]=!habits[habitIndex].history[date];
+  saveData();
+
+  // 🔥 Instantly refresh progress + charts
+  render();
+}
+
+function render(){
+  const year=parseInt(document.getElementById('yearSelect').value);
+  const month=parseInt(document.getElementById('monthSelect').value);
+  const table=document.getElementById('habitTable');
+  const daysCount=getDaysInMonth(year,month);
+
+  let totalCompleted=0;
+  const totalPossible=habits.length*daysCount;
+
+  let html='<tr><th>Habit</th>';
+  for(let d=1; d<=daysCount; d++){ html+=`<th>${d}</th>`; }
+  html+='<th>Delete</th></tr>';
+
+  habits.forEach((habit,i)=>{
+    html+=`<tr><td class='habit-name'>${habit.name}</td>`;
+    for(let d=1; d<=daysCount; d++){
+      const date=formatDate(year,month,d);
+      const checked=habit.history[date]?'checked':'';
+      if(checked) totalCompleted++;
+      html+=`<td><input type='checkbox' ${checked} onchange="toggleHabit(${i},'${date}')"></td>`;
+    }
+    html+=`<td><button type="button" class='delete-btn' data-index='${i}'>Delete</button></td></tr>`;
+  });
+
+  const percent=totalPossible>0?Math.round((totalCompleted/totalPossible)*100):0;
+  html+=`<tr class='progress-row'><td colspan='${daysCount+2}'>Monthly Success Score: ${percent}% (${totalCompleted}/${totalPossible})</td></tr>`;
+
+  table.innerHTML=html;
+
+  document.querySelectorAll('.delete-btn').forEach(btn=>{
+    btn.addEventListener('click',function(){
+      deleteHabit(parseInt(this.getAttribute('data-index')));
+    });
+  });
+
+  updateCharts(year,month,daysCount,totalCompleted,totalPossible);
+  updateMonthlyProgress(year);
+  updateYearChart(year);
+}
+
+function updateCharts(year,month,daysCount,totalCompleted,totalPossible){
+  const data=[];
+  for(let d=1; d<=daysCount; d++){
+    const date=formatDate(year,month,d);
+    let count=0;
+    habits.forEach(h=>{if(h.history[date]) count++;});
+    data.push(count);
+  }
+
+  if(lineChart) lineChart.destroy();
+  lineChart=new Chart(document.getElementById('lineChart'),{
+    type:currentType,
+    data:{
+      labels:Array.from({length:daysCount},(_,i)=>i+1),
+      datasets:[{
+        label:'Completed',
+        data:data,
+        borderColor:'#00ffff',
+        backgroundColor:'#00ffff22',
+        borderWidth:2,
+        tension:0.4
+      }]
+    },
+    options:{
+      responsive:true,
+      animation:{
+        duration:900,
+        easing:'easeOutQuart'
+      },
+      transitions:{
+        active:{
+          animation:{duration:400}
+        }
+      }
+    }
+  });
+
+  if(pieChart) pieChart.destroy();
+  pieChart=new Chart(document.getElementById('pieChart'),{
+    type:'doughnut',
+    data:{
+      labels:['Completed','Remaining'],
+      datasets:[{
+        data:[totalCompleted,totalPossible-totalCompleted],
+        backgroundColor:['#00ffcc','#FFD700'],
+        borderWidth:2,
+        hoverOffset:14
+      }]
+    },
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
+      cutout:'70%',
+      animation:{
+        duration:1200,
+        easing:'easeOutCubic'
+      },
+      plugins:{
+        legend:{
+          labels:{color:'#ffffff',padding:15}
+        }
+      }
+    }
+  });
+}
+
+function updateMonthlyProgress(year){
+  const progressTable=document.getElementById('monthlyProgressTable');
+  let html='<tr><th>Month</th><th>Success %</th><th>Change vs Last Month</th></tr>';
+
+  let prevPercent=null;
+
+  for(let m=0;m<12;m++){
+    const days=getDaysInMonth(year,m);
+    let completed=0;
+    const total=habits.length*days;
+
+    for(let d=1;d<=days;d++){
+      const date=formatDate(year,m,d);
+      habits.forEach(h=>{ if(h.history[date]) completed++; });
+    }
+
+    const percent= total>0 ? Math.round((completed/total)*100) : 0;
+
+    let changeText='-';
+    if(prevPercent!==null){
+      const diff=percent-prevPercent;
+      if(diff>0) changeText=`+${diff}%`;
+      else if(diff<0) changeText=`${diff}%`;
+      else changeText='0%';
+    }
+
+    html+=`<tr>
+      <td>${new Date(0,m).toLocaleString('default',{month:'long'})}</td>
+      <td>${percent}%</td>
+      <td>${changeText}</td>
+    </tr>`;
+
+    prevPercent=percent;
+  }
+
+  progressTable.innerHTML=html;
+}
+
+function updateYearChart(year){
+  const ctx = document.getElementById('yearChart').getContext('2d');
+  const monthlyPercents=[];
+
+  for(let m=0;m<12;m++){
+    const days=getDaysInMonth(year,m);
+    let completed=0;
+    const total=habits.length*days;
+
+    for(let d=1;d<=days;d++){
+      const date=formatDate(year,m,d);
+      habits.forEach(h=>{ if(h.history[date]) completed++; });
+    }
+
+    const percent= total>0 ? Math.round((completed/total)*100) : 0;
+    monthlyPercents.push(percent);
+  }
+
+  // Modern gradient effect
+  const gradient = ctx.createLinearGradient(0,0,0,300);
+  gradient.addColorStop(0,'#00ffff');
+  gradient.addColorStop(1,'#0088ff');
+
+  if(yearChart) yearChart.destroy();
+  yearChart=new Chart(ctx,{
+    type:'bar',
+    data:{
+      labels:['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
+      datasets:[{
+        label:'Yearly Success %',
+        data:monthlyPercents,
+        backgroundColor:gradient,
+        borderRadius:12,
+        borderSkipped:false,
+        hoverBackgroundColor:'#00ffff'
+      }]
+    },
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
+      animation:{
+        duration:1200,
+        easing:'easeOutCubic'
+      },
+      plugins:{
+        legend:{display:false},
+        tooltip:{
+          backgroundColor:'#111',
+          titleColor:'#00ffff',
+          bodyColor:'#ffffff',
+          borderColor:'#00ffff',
+          borderWidth:1
+        }
+      },
+      scales:{
+        y:{
+          beginAtZero:true,
+          max:100,
+          ticks:{color:'#ffffff'},
+          grid:{color:'#ffffff22'}
+        },
+        x:{
+          ticks:{color:'#ffffff'},
+          grid:{display:false}
+        }
+      }
+    }
+  });
+}
+
+function showChart(type){
+  currentType=type;
+  render();
+}
+
+populateSelectors();
+render();
+</script>
+
+</body>
+</html>
